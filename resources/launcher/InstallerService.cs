@@ -461,7 +461,9 @@ namespace CodexPatch.NativeLauncher
                 shortcutType.InvokeMember("WorkingDirectory", BindingFlags.SetProperty, null, shortcut, new object[] { workingDirectory });
                 shortcutType.InvokeMember("Arguments", BindingFlags.SetProperty, null, shortcut, new object[] { arguments ?? String.Empty });
                 string icon = String.IsNullOrWhiteSpace(iconPath) ? target : iconPath;
-                shortcutType.InvokeMember("IconLocation", BindingFlags.SetProperty, null, shortcut, new object[] { icon + ",0" });
+                string iconLocation = String.Equals(Path.GetExtension(icon), ".ico", StringComparison.OrdinalIgnoreCase) ?
+                    icon : icon + ",0";
+                shortcutType.InvokeMember("IconLocation", BindingFlags.SetProperty, null, shortcut, new object[] { iconLocation });
                 shortcutType.InvokeMember("Description", BindingFlags.SetProperty, null, shortcut, new object[] { description });
                 shortcutType.InvokeMember("Save", BindingFlags.InvokeMethod, null, shortcut, null);
                 LauncherCore.NotifyShellItemChanged(path);
