@@ -1,0 +1,20 @@
+{
+  "name": "codex-windows-desktop-patch",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Build and verify a narrowly patched Codex Windows bundle",
+  "scripts": {
+    "test": "node --test scripts/*.test.js",
+    "build-launcher": "node scripts/native-launcher.js --output out/CodexPatchLauncher.exe",
+    "detect": "node scripts/release-plan.js --detect-only",
+    "build": "node scripts/build-windows.js",
+    "plan-release": "node scripts/release-plan.js"
+  },
+  "dependencies": {
+    "acorn": "8.16.0",
+    "fast-xml-parser": "5.10.1"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

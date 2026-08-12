@@ -1,0 +1,281 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080" role="img" aria-labelledby="title desc">
+  <title id="title">Codex Windows PowerShell 与 API Fast 补丁工作原理</title>
+  <desc id="desc">介绍 PowerShell 后台优化、API Key Fast 认证门控修复、PowerShell 回退机制以及补丁边界。</desc>
+  <defs>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="10" stdDeviation="18" flood-color="#172033" flood-opacity="0.10"/>
+    </filter>
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="5" stdDeviation="8" flood-color="#172033" flood-opacity="0.08"/>
+    </filter>
+    <marker id="arrowOrange" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0 0L12 6L0 12Z" fill="#df6b2d"/>
+    </marker>
+    <marker id="arrowGreen" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0 0L12 6L0 12Z" fill="#18966b"/>
+    </marker>
+    <marker id="arrowGray" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0 0L12 6L0 12Z" fill="#8895a9"/>
+    </marker>
+    <style>
+      text { font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", Arial, sans-serif; letter-spacing: 0; }
+      .ink { fill: #172033; }
+      .muted { fill: #647187; }
+      .tiny { font-size: 16px; }
+      .small { font-size: 18px; }
+      .body { font-size: 21px; }
+      .label { font-size: 22px; font-weight: 700; }
+      .heading { font-size: 28px; font-weight: 800; }
+      .lineOrange { fill: none; stroke: #df6b2d; stroke-width: 5; stroke-linecap: round; marker-end: url(#arrowOrange); }
+      .lineGreen { fill: none; stroke: #18966b; stroke-width: 5; stroke-linecap: round; marker-end: url(#arrowGreen); }
+      .lineGray { fill: none; stroke: #8895a9; stroke-width: 4; stroke-linecap: round; marker-end: url(#arrowGray); }
+    </style>
+  </defs>
+
+  <rect width="1920" height="1080" fill="#f4f7fb"/>
+  <rect width="1920" height="12" fill="#2d6cdf"/>
+  <circle cx="1795" cy="88" r="118" fill="#e8f0fc"/>
+  <circle cx="1865" cy="40" r="44" fill="#dce9fb"/>
+
+  <g transform="translate(70 45)">
+    <rect width="286" height="34" rx="7" fill="#e7effc"/>
+    <text x="143" y="24" text-anchor="middle" fill="#275faf" font-size="16" font-weight="800">CODEX WINDOWS · COMMUNITY PATCH</text>
+    <text x="0" y="89" class="ink" font-size="43" font-weight="850">少启动 PowerShell，API Fast 可用</text>
+    <text x="0" y="128" class="muted" font-size="22">7 个后台调用由辅助程序处理；2 道 Fast 认证门控兼容 API Key</text>
+  </g>
+
+  <g transform="translate(1530 50)">
+    <rect width="310" height="92" rx="16" fill="#ffffff" stroke="#d8e0eb" filter="url(#softShadow)"/>
+    <circle cx="42" cy="32" r="9" fill="#20a170"/>
+    <text x="64" y="39" class="ink" font-size="20" font-weight="800">非官方社区补丁</text>
+    <text x="42" y="70" class="muted" font-size="17">Windows x64 · Patch v1.0.0</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="70" y="190" width="370" height="590" rx="18" fill="#ffffff"/>
+    <rect x="465" y="190" width="1385" height="590" rx="18" fill="#ffffff"/>
+  </g>
+
+  <g transform="translate(100 220)">
+    <text x="0" y="31" class="heading ink">PowerShell 子模块</text>
+    <text x="0" y="63" class="muted small">按用途归类，不等于修改全部命令</text>
+
+    <g transform="translate(0 94)">
+      <rect width="310" height="76" rx="12" fill="#edf4ff"/>
+      <circle cx="39" cy="38" r="24" fill="#2d6cdf"/>
+      <circle cx="32" cy="31" r="5" fill="#ffffff"/>
+      <circle cx="47" cy="31" r="5" fill="#ffffff"/>
+      <path d="M32 36V51M47 36V51M32 44H47" fill="none" stroke="#ffffff" stroke-width="3.5" stroke-linecap="round"/>
+      <text x="77" y="32" class="label ink">进程关系</text>
+      <text x="77" y="57" class="muted tiny">父进程、子进程与进程编号</text>
+    </g>
+    <g transform="translate(0 182)">
+      <rect width="310" height="76" rx="12" fill="#eef8f4"/>
+      <circle cx="39" cy="38" r="24" fill="#21966e"/>
+      <path d="M24 48L34 39L42 44L55 27" fill="none" stroke="#ffffff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="77" y="32" class="label ink">进程状态</text>
+      <text x="77" y="57" class="muted tiny">CPU、内存、运行时间等信息</text>
+    </g>
+    <g transform="translate(0 270)">
+      <rect width="310" height="76" rx="12" fill="#fff5ec"/>
+      <circle cx="39" cy="38" r="24" fill="#df6b2d"/>
+      <path d="M25 28H46L54 36V52H25ZM46 28V36H54M31 43H47" fill="none" stroke="#ffffff" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
+      <text x="77" y="32" class="label ink">程序路径</text>
+      <text x="77" y="57" class="muted tiny">可执行文件位置与启动参数</text>
+    </g>
+    <g transform="translate(0 358)">
+      <rect width="310" height="76" rx="12" fill="#f4f0fc"/>
+      <circle cx="39" cy="38" r="24" fill="#7559bc"/>
+      <path d="M25 28H53V52H25ZM33 28V34H41V40H33V46H41V52" fill="none" stroke="#ffffff" stroke-width="3.5" stroke-linejoin="round"/>
+      <text x="77" y="32" class="label ink">ZIP 处理</text>
+      <text x="77" y="57" class="muted tiny">查看文件列表、解压内容</text>
+    </g>
+    <g transform="translate(0 446)">
+      <rect width="310" height="76" rx="12" fill="#eef6f8"/>
+      <circle cx="39" cy="38" r="24" fill="#34849a"/>
+      <rect x="26" y="25" width="11" height="11" rx="2" fill="#ffffff"/>
+      <rect x="41" y="25" width="11" height="11" rx="2" fill="#ffffff"/>
+      <rect x="26" y="40" width="11" height="11" rx="2" fill="#ffffff"/>
+      <rect x="41" y="40" width="11" height="11" rx="2" fill="#ffffff"/>
+      <text x="77" y="32" class="label ink">Windows 应用</text>
+      <text x="77" y="57" class="muted tiny">应用列表、运行状态与最近使用</text>
+    </g>
+  </g>
+
+  <g transform="translate(500 215)">
+    <text x="0" y="31" class="heading ink">同一个任务，两条不同路径</text>
+    <g transform="translate(935 0)">
+      <rect width="350" height="42" rx="9" fill="#edf4ff"/>
+      <text x="175" y="28" text-anchor="middle" fill="#275faf" font-size="18" font-weight="800">7 个已知后台调用位置</text>
+    </g>
+
+    <g transform="translate(0 70)">
+      <rect width="1315" height="180" rx="15" fill="#fff7f1" stroke="#f2d6c4"/>
+      <rect x="22" y="20" width="112" height="36" rx="8" fill="#fde8da"/>
+      <text x="78" y="45" text-anchor="middle" fill="#ae4b1b" font-size="19" font-weight="800">官方路径</text>
+      <text x="153" y="45" fill="#8b5a3f" font-size="17">每次任务都会重新走一遍</text>
+
+      <g transform="translate(36 79)">
+        <rect width="114" height="58" rx="11" fill="#ffffff" stroke="#dfc8ba"/>
+        <text x="57" y="36" text-anchor="middle" class="label ink">Codex</text>
+      </g>
+      <path d="M165 108H224" class="lineOrange"/>
+
+      <g transform="translate(244 54)">
+        <rect x="12" y="8" width="230" height="86" rx="10" fill="#30394a" opacity="0.25"/>
+        <rect width="230" height="86" rx="10" fill="#252d3b"/>
+        <rect width="230" height="23" rx="10" fill="#394356"/>
+        <circle cx="15" cy="12" r="4" fill="#f07167"/>
+        <circle cx="30" cy="12" r="4" fill="#f2c85b"/>
+        <circle cx="45" cy="12" r="4" fill="#63c68b"/>
+        <path d="M27 42L43 54L27 66M54 67H89" fill="none" stroke="#ffffff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+        <text x="154" y="53" text-anchor="middle" fill="#ffffff" font-size="16" font-weight="700">powershell.exe</text>
+        <text x="115" y="112" text-anchor="middle" fill="#ae4b1b" font-size="15" font-weight="750">启动进程 · 加载环境</text>
+      </g>
+      <path d="M505 108H552" class="lineOrange"/>
+
+      <g transform="translate(572 67)">
+        <rect width="220" height="86" rx="11" fill="#ffffff" stroke="#dfc8ba"/>
+        <circle cx="39" cy="43" r="22" fill="#fde8da"/>
+        <path d="M29 35H49M29 43H49M29 51H43" fill="none" stroke="#c95b24" stroke-width="4" stroke-linecap="round"/>
+        <text x="68" y="37" fill="#172033" font-size="18" font-weight="800">加载并解释脚本</text>
+        <text x="68" y="63" class="muted tiny">准备运行环境</text>
+      </g>
+      <path d="M809 108H856" class="lineOrange"/>
+
+      <g transform="translate(876 67)">
+        <rect width="190" height="86" rx="11" fill="#ffffff" stroke="#dfc8ba"/>
+        <circle cx="40" cy="43" r="22" fill="#fde8da"/>
+        <path d="M29 32H51V54H29ZM35 38H45V48H35Z" fill="none" stroke="#c95b24" stroke-width="3.5"/>
+        <text x="68" y="37" fill="#172033" font-size="18" font-weight="800">调用系统接口</text>
+        <text x="68" y="63" class="muted tiny">读取所需数据</text>
+      </g>
+      <path d="M1083 108H1138" class="lineOrange"/>
+
+      <g transform="translate(1158 79)">
+        <rect width="120" height="58" rx="11" fill="#fff0e7" stroke="#efc4ab"/>
+        <text x="60" y="26" text-anchor="middle" fill="#a94a1a" font-size="18" font-weight="800">返回结果</text>
+        <text x="60" y="47" text-anchor="middle" fill="#a97559" font-size="14">随后退出</text>
+      </g>
+    </g>
+
+    <g transform="translate(0 270)">
+      <rect width="1315" height="270" rx="15" fill="#eff9f5" stroke="#bfe3d3" stroke-width="2"/>
+      <rect x="22" y="20" width="112" height="36" rx="8" fill="#dff3ea"/>
+      <text x="78" y="45" text-anchor="middle" fill="#147554" font-size="19" font-weight="800">补丁路径</text>
+      <text x="153" y="45" fill="#477565" font-size="17">已知任务直接处理，未知任务保留原行为</text>
+
+      <g transform="translate(36 95)">
+        <rect width="114" height="62" rx="11" fill="#ffffff" stroke="#a9d7c3"/>
+        <text x="57" y="39" text-anchor="middle" class="label ink">Codex</text>
+        <rect x="15" y="72" width="84" height="26" rx="6" fill="#e7effc"/>
+        <text x="57" y="91" text-anchor="middle" fill="#275faf" font-size="13" font-weight="750">内部入口已调整</text>
+      </g>
+      <path d="M165 126H224" class="lineGreen"/>
+
+      <g transform="translate(244 77)">
+        <rect width="270" height="98" rx="14" fill="#ffffff" stroke="#8ecbb0" stroke-width="2" filter="url(#softShadow)"/>
+        <rect x="20" y="19" width="62" height="60" rx="12" fill="#218f69"/>
+        <path d="M38 39H64M38 55H56" fill="none" stroke="#ffffff" stroke-width="6" stroke-linecap="round"/>
+        <text x="98" y="36" fill="#172033" font-size="20" font-weight="800">轻量辅助程序</text>
+        <text x="98" y="61" class="muted" font-size="14">直接完成固定后台任务</text>
+        <rect x="20" y="76" width="230" height="17" rx="5" fill="#e5f4ed"/>
+        <text x="135" y="89" text-anchor="middle" fill="#147554" font-size="10" font-weight="700">codex-powershell-shim.exe</text>
+      </g>
+      <path d="M531 126H554" class="lineGreen"/>
+
+      <g transform="translate(584 77)">
+        <path d="M90 0L180 49L90 98L0 49Z" fill="#ffffff" stroke="#8ecbb0" stroke-width="2"/>
+        <text x="90" y="43" text-anchor="middle" fill="#176f52" font-size="17" font-weight="800">认识这项任务？</text>
+        <text x="90" y="66" text-anchor="middle" class="muted" font-size="13">完整内容必须精确匹配</text>
+      </g>
+
+      <path d="M781 126H824" class="lineGreen"/>
+      <rect x="787" y="92" width="42" height="24" rx="6" fill="#dff3ea"/>
+      <text x="808" y="109" text-anchor="middle" fill="#147554" font-size="13" font-weight="800">是</text>
+
+      <g transform="translate(844 77)">
+        <rect width="240" height="98" rx="13" fill="#ffffff" stroke="#8ecbb0"/>
+        <circle cx="44" cy="49" r="25" fill="#e1f4eb"/>
+        <path d="M32 38H56V62H32ZM38 44H50V56H38Z" fill="none" stroke="#198a64" stroke-width="4"/>
+        <text x="78" y="36" fill="#172033" font-size="19" font-weight="800">系统原生接口</text>
+        <text x="78" y="61" class="muted" font-size="14">Windows / WMI / .NET</text>
+        <text x="78" y="82" fill="#147554" font-size="13">直接读取并处理</text>
+      </g>
+      <path d="M1102 126H1125" class="lineGreen"/>
+
+      <g transform="translate(1145 95)">
+        <rect width="140" height="62" rx="11" fill="#dff3ea" stroke="#a9d7c3"/>
+        <circle cx="25" cy="31" r="14" fill="#24a375"/>
+        <path d="M18 31L23 36L33 24" fill="none" stroke="#ffffff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+        <text x="91" y="38" text-anchor="middle" fill="#126b4c" font-size="18" font-weight="800">相同结果</text>
+      </g>
+
+      <path d="M674 178V216H790" class="lineGray"/>
+      <rect x="686" y="183" width="116" height="24" rx="6" fill="#eef1f5"/>
+      <text x="744" y="200" text-anchor="middle" fill="#69768a" font-size="13" font-weight="800">不认识或处理失败</text>
+      <g transform="translate(818 196)">
+        <rect width="270" height="50" rx="10" fill="#ffffff" stroke="#cbd3df"/>
+        <rect x="16" y="12" width="42" height="27" rx="5" fill="#333c4d"/>
+        <path d="M25 21L33 26L25 32M38 33H48" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round"/>
+        <text x="72" y="22" fill="#4f5c70" font-size="15" font-weight="750">交给真正的 PowerShell</text>
+        <text x="72" y="41" fill="#7a879a" font-size="13">继续按原方式执行</text>
+      </g>
+      <path d="M1105 221H1160" class="lineGray"/>
+      <text x="1182" y="226" fill="#657287" font-size="16" font-weight="700">保持原有行为</text>
+    </g>
+  </g>
+
+  <g transform="translate(70 810)">
+    <text x="0" y="28" class="heading ink">补丁的边界</text>
+    <text x="190" y="28" class="muted small">不接管终端；API Fast 不绕过服务资格与计费</text>
+
+    <g transform="translate(0 55)">
+      <rect width="430" height="130" rx="15" fill="#ffffff" stroke="#d8e0eb"/>
+      <circle cx="53" cy="50" r="27" fill="#e7effc"/>
+      <path d="M40 41L51 50L40 59M57 60H67" fill="none" stroke="#2d6cdf" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="96" y="40" class="label ink">你主动执行的命令不变</text>
+      <text x="96" y="68" class="muted tiny">终端里运行的 PowerShell 照常执行</text>
+      <rect x="30" y="92" width="370" height="1" fill="#e4e9f1"/>
+      <text x="30" y="116" fill="#2d6cdf" font-size="15" font-weight="750">不会把所有 PowerShell 命令改走辅助程序</text>
+    </g>
+
+    <g transform="translate(450 55)">
+      <rect width="430" height="130" rx="15" fill="#ffffff" stroke="#d8e0eb"/>
+      <circle cx="53" cy="50" r="27" fill="#eef8f4"/>
+      <rect x="39" y="36" width="28" height="28" rx="5" fill="none" stroke="#21966e" stroke-width="4"/>
+      <path d="M46 43H60M46 50H60M46 57H55" fill="none" stroke="#21966e" stroke-width="3" stroke-linecap="round"/>
+      <text x="96" y="40" class="label ink">官方核心程序保持原样</text>
+      <text x="96" y="68" class="muted tiny">不拿旧版程序覆盖新版 Codex</text>
+      <rect x="30" y="92" width="370" height="1" fill="#e4e9f1"/>
+      <text x="30" y="116" fill="#1b7f5e" font-size="14" font-weight="750">ChatGPT.exe · Codex.exe · resources/codex.exe</text>
+    </g>
+
+    <g transform="translate(900 55)">
+      <rect width="430" height="130" rx="15" fill="#ffffff" stroke="#d8e0eb"/>
+      <circle cx="53" cy="50" r="27" fill="#fff3ea"/>
+      <path d="M40 50L49 59L68 38" fill="none" stroke="#d96b30" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="96" y="40" class="label ink">匹配不准就停止或回退</text>
+      <text x="96" y="68" class="muted tiny">PowerShell 或 Fast 结构变化时停止构建</text>
+      <rect x="30" y="92" width="370" height="1" fill="#e4e9f1"/>
+      <text x="30" y="116" fill="#b65725" font-size="15" font-weight="750">构建检查位置 · 运行时保留 PowerShell 后路</text>
+    </g>
+
+    <g transform="translate(1350 55)">
+      <rect width="430" height="130" rx="15" fill="#ffffff" stroke="#d8e0eb"/>
+      <circle cx="53" cy="50" r="27" fill="#f1edfa"/>
+      <path d="M40 42H66V63H40ZM46 35H60V42M46 51H60" fill="none" stroke="#7559bc" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="96" y="40" class="label ink">独立安装，随时可删除</text>
+      <text x="96" y="68" class="muted tiny">不覆盖商店版，也可以保留旧版本</text>
+      <rect x="30" y="92" width="370" height="1" fill="#e4e9f1"/>
+      <text x="30" y="116" fill="#6750a6" font-size="15" font-weight="750">安装包可校验 · 更新失败可回退</text>
+    </g>
+  </g>
+
+  <g transform="translate(70 1027)">
+    <rect width="1780" height="38" rx="9" fill="#172033"/>
+    <circle cx="24" cy="19" r="7" fill="#f2c85b"/>
+    <text x="42" y="25" fill="#dce3ef" font-size="16">实际感受取决于 Codex 触发这些后台任务的频率；补丁不承诺整机性能、温度或续航一定提升。</text>
+    <text x="1748" y="25" text-anchor="end" fill="#8fa0ba" font-size="14">github.com/zhy0504/Codex-Windows-Desktop-Patch</text>
+  </g>
+</svg>

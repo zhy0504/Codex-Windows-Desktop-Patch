@@ -1,0 +1,422 @@
+name: Codex Windows Desktop Patch - Auto Release
+
+on:
+  schedule:
+    - cron: "0 23 * * *"
+  workflow_dispatch:
+    inputs:
+      force_build:
+        description: "Build even when this Store and patch version already has a release"
+        type: boolean
+        default: false
+      publish_release:
+        description: "Publish a GitHub Release when the deterministic tag is missing"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: codex-windows-desktop-patch-auto-release
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: "22"
+
+jobs:
+  plan:
+    name: Detect official Windows release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      msix_version: ${{ steps.plan.outputs.msix_version }}
+      package_name: ${{ steps.plan.outputs.package_name }}
+      patch_version: ${{ steps.plan.outputs.patch_version }}
+      reason: ${{ steps.plan.outputs.reason }}
+      release_exists: ${{ steps.plan.outputs.release_exists }}
+      release_tag: ${{ steps.plan.outputs.release_tag }}
+      should_build: ${{ steps.plan.outputs.should_build }}
+      should_publish: ${{ steps.plan.outputs.should_publish }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Audit runtime dependencies
+        run: npm audit --audit-level=moderate
+
+      - name: Plan deterministic release
+        id: plan
+        env:
+          FORCE_BUILD: ${{ github.event_name == 'workflow_dispatch' && inputs.force_build || false }}
+          GITHUB_TOKEN: ${{ github.token }}
+          PLAN_OUTPUT_PATH: windows-release-plan.json
+          PUBLISH_RELEASE: ${{ github.event_name != 'workflow_dispatch' || inputs.publish_release }}
+        run: npm run plan-release
+
+      - name: Upload detection evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: Windows-release-plan-${{ github.run_id }}
+          path: windows-release-plan.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Report decision
+        run: |
+          echo "Store version: ${{ steps.plan.outputs.msix_version }}"
+          echo "Patch version: ${{ steps.plan.outputs.patch_version }}"
+          echo "Release tag: ${{ steps.plan.outputs.release_tag }}"
+          echo "Decision: ${{ steps.plan.outputs.reason }}"
+
+  build:
+    name: Download, patch, and verify Windows x64
+    needs: plan
+    if: needs.plan.outputs.should_build == 'true'
+    runs-on: windows-2022
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build from the current official Store package
+        env:
+          EXPECTED_MSIX_VERSION: ${{ needs.plan.outputs.msix_version }}
+        run: >-
+          node scripts/build-windows.js
+          --expected-version "$env:EXPECTED_MSIX_VERSION"
+
+      - name: Validate machine-readable release evidence
+        env:
+          EXPECTED_MSIX_VERSION: ${{ needs.plan.outputs.msix_version }}
+          EXPECTED_PATCH_VERSION: ${{ needs.plan.outputs.patch_version }}
+        run: |
+          $reports = @(Get-ChildItem -LiteralPath out -Filter '*.verification.json')
+          if ($reports.Count -ne 1) { throw "Expected one verification report, found $($reports.Count)" }
+          $report = Get-Content -LiteralPath $reports[0].FullName -Raw | ConvertFrom-Json
+          if ($report.upstream.version -ne $env:EXPECTED_MSIX_VERSION) { throw 'MSIX version mismatch' }
+          if ($report.upstream.architecture -ne 'x64') { throw 'MSIX architecture mismatch' }
+          if ($report.upstream.identityName -ne 'OpenAI.Codex') { throw 'MSIX identity mismatch' }
+          if ($report.upstream.publisher -ne 'CN=50BDFD77-8903-4850-9FFE-6E8522F64D5B') { throw 'MSIX publisher mismatch' }
+          if ($report.upstream.signature.status -ne 'Valid') { throw 'Valid MSIX signature evidence is missing' }
+          if ($report.patchVersion -ne $env:EXPECTED_PATCH_VERSION) { throw 'Patch version mismatch' }
+          if ($report.asar.patch.workerTargets -ne 2) { throw 'Patched worker target count mismatch' }
+          if ($report.asar.patch.runtimeQueryTargets -ne 2) { throw 'Patched runtime query target count mismatch' }
+          if ($report.asar.patch.runtimeInternalHelperTargets -ne 3) { throw 'Patched runtime internal helper count mismatch' }
+          if ($report.asar.patch.runtimeInternalPowerShellEliminatedTargets -ne 3) { throw 'Eliminated internal PowerShell count mismatch' }
+          if ($report.asar.patch.runtimePowerShellDirectTargets -ne 0) { throw 'Runtime still has a direct internal PowerShell target' }
+          if ($report.asar.patch.runtimePowerShellResolutionTargets -ne 1) { throw 'Patched runtime PowerShell resolver count mismatch' }
+          if ($report.asar.patch.totalInternalPowerShellEliminatedTargets -ne 7) { throw 'Total eliminated internal PowerShell count mismatch' }
+          if ($report.asar.patch.runtimeMetadataScriptBytes -lt 1) { throw 'Desktop metadata script size evidence is missing' }
+          if ($report.asar.patch.runtimeMetadataScriptSha256 -notmatch '^[0-9a-f]{64}$') { throw 'Desktop metadata script hash evidence is missing' }
+          if ($report.asar.patch.runtimeEnvironmentTargets -ne 1) { throw 'Patched runtime environment target count mismatch' }
+          if ($report.asar.patch.runtimeEntry -notmatch '^\.vite/build/src-[^/]+\.js$') { throw 'Runtime ASAR entry mismatch' }
+          $fastMode = $report.asar.patch.fastMode
+          $fastTargets = [int]$fastMode.authGateTargets
+          $fastChangedEntries = [int]$fastMode.changedEntries
+          $fastChangedPaths = @($fastMode.changedPaths)
+          if ([int]$fastMode.expectedAuthGates -ne 2 -or [int]$fastMode.totalAuthGates -ne 2) { throw 'Fast mode structural gate count mismatch' }
+          if ($fastTargets -lt 0 -or $fastTargets -gt 2) { throw 'Fast mode source target count mismatch' }
+          if ([int]$fastMode.effectiveApiKeyGates -ne 2) { throw 'Effective API-key Fast mode gate count mismatch' }
+          if (([int]$fastMode.markerTargets + [int]$fastMode.nativeApiKeyGates) -ne 2) { throw 'Fast mode gate provenance count mismatch' }
+          if ($fastMode.state -notin @('patched', 'native', 'patched-and-native')) { throw 'Fast mode final state mismatch' }
+          if ($fastChangedEntries -ne $fastChangedPaths.Count) { throw 'Fast mode changed-entry count mismatch' }
+          if ($fastTargets -eq 0 -and $fastChangedEntries -ne 0) { throw 'Fast mode changed an entry without a source target' }
+          if ($fastTargets -gt 0 -and ($fastChangedEntries -lt 1 -or $fastChangedEntries -gt $fastTargets)) { throw 'Fast mode changed-entry scope mismatch' }
+          foreach ($fastPath in $fastChangedPaths) {
+            if ($fastPath -notmatch '^webview/assets/[^/]+\.js$') { throw "Unexpected Fast mode ASAR entry: $fastPath" }
+          }
+          $expectedLogicalChanges = 2 + $fastChangedEntries
+          if ($report.asar.logicalComparison.contentChanges -ne $expectedLogicalChanges) { throw 'ASAR logical diff count mismatch' }
+          $changedEntries = @($report.asar.logicalComparison.changed) | Sort-Object
+          $expectedChangedEntries = @('.vite/build/child-process-snapshot-worker.js', $report.asar.patch.runtimeEntry) + $fastChangedPaths | Sort-Object
+          if (($changedEntries -join '|') -cne ($expectedChangedEntries -join '|')) { throw 'Unexpected ASAR logical change' }
+          if (@($report.asar.logicalComparison.packingChanged).Count -ne 0) { throw 'ASAR packing mode changed' }
+          $addedFiles = @($report.applicationScope.added)
+          if (($addedFiles -join '|') -ne 'CodexPatch-integrity.json|CodexPatchLauncher.exe|resources/codex-powershell-resolver.js|resources/codex-powershell-shim.exe') { throw 'Unexpected application file added' }
+          if (@($report.applicationScope.changed).Count -ne 1 -or $report.applicationScope.changed[0] -ne 'resources/app.asar') { throw 'Unexpected application file changed' }
+          if (@($report.applicationScope.removed).Count -ne 0) { throw 'Official application file removed' }
+          if ($report.helper.version -ne $env:EXPECTED_PATCH_VERSION) { throw 'Helper version mismatch' }
+          if ($report.helper.selfTest.ShimVersion -ne $env:EXPECTED_PATCH_VERSION) { throw 'Helper self-test evidence is missing' }
+          if ($report.helper.selfTest.ExecutablePathRows -lt 1) { throw 'Executable-path helper evidence is missing' }
+          if ($report.helper.selfTest.DesktopAppRows -lt 1) { throw 'Desktop metadata helper evidence is missing' }
+          if ($report.helper.selfTest.ZipRoundTripFiles -ne 1) { throw 'ZIP helper evidence is missing' }
+          if ($report.helper.selfTest.PowerShellChildProcesses -ne 0) { throw 'Helper self-test launched PowerShell' }
+          if ($report.helper.selfTestDurationMs -le 0) { throw 'Helper timing evidence is missing' }
+          if ($report.resolver.filename -ne 'codex-powershell-resolver.js') { throw 'Resolver filename mismatch' }
+          if ($report.resolver.version -ne $env:EXPECTED_PATCH_VERSION) { throw 'Resolver version mismatch' }
+          if ($report.resolver.sha256 -notmatch '^[0-9a-f]{64}$') { throw 'Resolver SHA-256 evidence is missing' }
+          if (-not $report.workerSmoke.controlledChildObserved) { throw 'Patched worker smoke evidence is missing' }
+          if ($null -eq $report.workerSmoke.extraction.unpackedMetadataMismatches) { throw 'Unpacked ASAR metadata evidence is missing' }
+          $unpackedMismatches = @($report.workerSmoke.extraction.unpackedMetadataMismatches)
+          if ($unpackedMismatches.Count -gt 20) { throw 'Too many unpacked ASAR metadata deviations' }
+          foreach ($mismatch in $unpackedMismatches) {
+            $segments = @(([string]$mismatch.path) -split '/')
+            if ($segments.Count -lt 1 -or $segments -contains '' -or $segments -contains '.' -or $segments -contains '..') { throw 'Unsafe unpacked ASAR metadata path' }
+            if ($mismatch.actualSha256 -notmatch '^[0-9a-f]{64}$') { throw 'Unpacked ASAR actual hash evidence is missing' }
+            if ($null -ne $mismatch.expectedSha256 -and $mismatch.expectedSha256 -notmatch '^[0-9a-f]{64}$') { throw 'Unpacked ASAR expected hash evidence is invalid' }
+            if ($mismatch.actualBytes -eq $mismatch.expectedBytes -and $mismatch.actualSha256 -eq $mismatch.expectedSha256) { throw 'Unpacked ASAR metadata deviation has no difference' }
+            if ($mismatch.signature.status -ne 'Valid' -or $mismatch.signature.verifier -ne 'Windows SDK SignTool /pa /all') { throw 'Unpacked ASAR signature evidence is invalid' }
+          }
+          if (@($report.officialExecutables.PSObject.Properties).Count -ne 3) { throw 'Official executable hash evidence is incomplete' }
+          if (@($report.zip.verifiedPayloads.PSObject.Properties).Count -ne 7) { throw 'ZIP payload hash evidence is incomplete' }
+          if ($report.zip.sha256 -notmatch '^[0-9a-f]{64}$') { throw 'ZIP SHA-256 evidence is missing' }
+          if ($report.artifact.zip -notmatch '^CX-[0-9.]+-p[0-9.]+\.zip$') { throw 'Portable ZIP name is not compact' }
+          if ($report.zip.pathCompatibility.explicitRootEntries -ne 0) { throw 'ZIP contains a WinRAR-incompatible root entry' }
+          if ($report.zip.pathCompatibility.longestEntryLength -lt 1) { throw 'ZIP path-length evidence is missing' }
+          if ($report.zip.pathCompatibility.legacyMaxDestinationLength -lt 1) { throw 'ZIP has no legacy Windows destination-path budget' }
+          if ($report.zip.pathCompatibility.recommendedInstaller -ne 'CodexPatchLauncher.exe') { throw 'Recommended installer evidence is missing' }
+          if ($report.nativeLauncher.file -ne 'CodexPatchLauncher.exe' -or $report.nativeLauncher.version -ne $env:EXPECTED_PATCH_VERSION) { throw 'Native launcher identity mismatch' }
+          if ($report.nativeLauncher.bytes -lt 32768 -or $report.nativeLauncher.bytes -gt 2097152) { throw 'Native launcher size boundary mismatch' }
+          if ($report.nativeLauncher.selfTest.nativeLauncher -ne $true -or $report.nativeLauncher.selfTest.nativeInstaller -ne $true -or $report.nativeLauncher.selfTest.directShortcut -ne $true -or $report.nativeLauncher.selfTest.versionCatalog -ne $true -or $report.nativeLauncher.selfTest.directorySize -ne $true -or $report.nativeLauncher.selfTest.directLaunchTarget -ne $true -or $report.nativeLauncher.selfTest.manualDeletion -ne $true -or $report.nativeLauncher.selfTest.retentionPolicy -ne $true -or $report.nativeLauncher.selfTest.criticalValidation -ne $true -or $report.nativeLauncher.selfTest.managerIcon -ne $true -or $report.nativeLauncher.selfTest.powerShellChildProcesses -ne 0) { throw 'Native launcher self-test evidence is missing' }
+          if ($report.portableLauncher.file -ne 'CodexPatchLauncher.exe') { throw 'Portable launcher filename mismatch' }
+          if ($report.portableLauncher.version -ne $env:EXPECTED_PATCH_VERSION) { throw 'Portable launcher version mismatch' }
+          if ($report.portableLauncher.sha256 -notmatch '^[0-9a-f]{64}$') { throw 'Portable launcher hash evidence is missing' }
+          $manifests = @(Get-ChildItem -LiteralPath out -Filter 'CodexPatch-update.json')
+          if ($manifests.Count -ne 1) { throw "Expected one update manifest, found $($manifests.Count)" }
+          $manifest = Get-Content -LiteralPath $manifests[0].FullName -Raw | ConvertFrom-Json
+          if ($manifest.schemaVersion -ne 2 -or $manifest.channel -ne 'stable') { throw 'Update manifest schema or channel mismatch' }
+          if ($manifest.repository -ne 'zhy0504/Codex-Windows-Desktop-Patch') { throw 'Update manifest repository mismatch' }
+          if ($manifest.msixVersion -ne $env:EXPECTED_MSIX_VERSION -or $manifest.patchVersion -ne $env:EXPECTED_PATCH_VERSION) { throw 'Update manifest version mismatch' }
+          $expectedTag = "windows-msstore-$($env:EXPECTED_MSIX_VERSION)-desktop-patch-$($env:EXPECTED_PATCH_VERSION)"
+          if ($manifest.releaseTag -ne $expectedTag) { throw 'Update manifest release tag mismatch' }
+          foreach ($assetName in @('zip', 'checksum', 'verification', 'launcher')) {
+            $asset = $manifest.assets.$assetName
+            $assetPath = Join-Path 'out' $asset.name
+            if (-not (Test-Path -LiteralPath $assetPath -PathType Leaf)) { throw "Update asset is missing: $($asset.name)" }
+            $item = Get-Item -LiteralPath $assetPath
+            if ($item.Length -ne $asset.size) { throw "Update asset size mismatch: $($asset.name)" }
+            $hash = (Get-FileHash -LiteralPath $assetPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($hash -ne $asset.sha256) { throw "Update asset hash mismatch: $($asset.name)" }
+          }
+          $bundles = @(Get-ChildItem -LiteralPath out -Filter 'CX-*-bundle.zip')
+          if ($bundles.Count -ne 1) { throw "Expected one release bundle, found $($bundles.Count)" }
+          if ($bundles[0].Name -ne $report.artifact.bundle) { throw 'Release bundle name mismatch' }
+          $bundleEntries = @(& "$env:SystemRoot\System32\tar.exe" -tf $bundles[0].FullName)
+          if ($LASTEXITCODE -ne 0) { throw 'Could not list release bundle' }
+          $expectedEntries = @(
+            'CodexPatchLauncher.exe', 'CodexPatch-update.json', $report.artifact.zip,
+            "$($report.artifact.zip).sha256", "$($report.artifact.directory).verification.json"
+          ) | Sort-Object
+          $actualEntries = @($bundleEntries | Where-Object { $_ } | ForEach-Object { $_ -replace '^\./', '' }) | Sort-Object
+          if (($actualEntries -join '|') -cne ($expectedEntries -join '|')) { throw 'Release bundle content mismatch' }
+
+      - name: Upload verified release bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: Codex-Windows-x64-${{ needs.plan.outputs.msix_version }}-DesktopPatch-${{ needs.plan.outputs.patch_version }}
+          path: out/CX-*-bundle.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish GitHub Release
+    needs: [plan, build]
+    if: needs.plan.outputs.should_publish == 'true' && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - name: Download verified assets
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: Codex-Windows-x64-${{ needs.plan.outputs.msix_version }}-DesktopPatch-${{ needs.plan.outputs.patch_version }}
+          path: artifacts
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Revalidate checksum and evidence
+        shell: bash
+        env:
+          EXPECTED_MSIX_VERSION: ${{ needs.plan.outputs.msix_version }}
+          EXPECTED_PATCH_VERSION: ${{ needs.plan.outputs.patch_version }}
+        run: |
+          set -euo pipefail
+          mapfile -t bundles < <(find artifacts -type f -name 'CX-*-bundle.zip')
+          if [[ ${#bundles[@]} -ne 1 ]]; then
+            echo "Expected exactly one release bundle, found ${#bundles[@]}" >&2
+            exit 1
+          fi
+          mkdir bundle
+          unzip -q "${bundles[0]}" -d bundle
+          mapfile -t checksums < <(find bundle -type f -name '*.zip.sha256')
+          mapfile -t launchers < <(find bundle -type f -name 'CodexPatchLauncher.exe')
+          mapfile -t manifests < <(find bundle -type f -name 'CodexPatch-update.json')
+          mapfile -t reports < <(find bundle -type f -name '*.verification.json')
+          mapfile -t zips < <(find bundle -type f -name 'CX-*.zip' ! -name '*-bundle.zip')
+          if [[ ${#checksums[@]} -ne 1 || ${#launchers[@]} -ne 1 || ${#manifests[@]} -ne 1 || ${#reports[@]} -ne 1 || ${#zips[@]} -ne 1 ]]; then
+            echo "Release bundle content is incomplete or ambiguous" >&2
+            exit 1
+          fi
+          checksum_dir="$(dirname "${checksums[0]}")"
+          (cd "$checksum_dir" && sha256sum --check "$(basename "${checksums[0]}")")
+          node - "${reports[0]}" "${checksums[0]}" "${launchers[0]}" "${manifests[0]}" "${zips[0]}" <<'NODE'
+          const crypto = require("crypto");
+          const fs = require("fs");
+          const path = require("path");
+          const report = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+          const sidecarHash = fs.readFileSync(process.argv[3], "utf8").trim().split(/\s+/)[0];
+          const launcherHash = crypto.createHash("sha256").update(fs.readFileSync(process.argv[4])).digest("hex");
+          const manifest = JSON.parse(fs.readFileSync(process.argv[5], "utf8"));
+          const fail = (message) => { throw new Error(message); };
+          const hashFile = (file) => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+          if (report.upstream?.version !== process.env.EXPECTED_MSIX_VERSION) fail("MSIX version mismatch");
+          if (report.upstream?.signature?.status !== "Valid") fail("signature evidence missing");
+          if (report.patchVersion !== process.env.EXPECTED_PATCH_VERSION) fail("patch version mismatch");
+          if (report.asar?.patch?.workerTargets !== 2) fail("worker target mismatch");
+          if (report.asar?.patch?.runtimeQueryTargets !== 2) fail("runtime query target mismatch");
+          if (report.asar?.patch?.runtimeInternalHelperTargets !== 3) fail("runtime internal helper mismatch");
+          if (report.asar?.patch?.runtimeInternalPowerShellEliminatedTargets !== 3) fail("eliminated internal PowerShell mismatch");
+          if (report.asar?.patch?.runtimePowerShellDirectTargets !== 0) fail("runtime direct PowerShell remains");
+          if (report.asar?.patch?.runtimePowerShellResolutionTargets !== 1) fail("runtime PowerShell resolver mismatch");
+          if (report.asar?.patch?.totalInternalPowerShellEliminatedTargets !== 7) fail("total eliminated internal PowerShell mismatch");
+          if (!(report.asar?.patch?.runtimeMetadataScriptBytes > 0)) fail("desktop metadata script size missing");
+          if (!/^[0-9a-f]{64}$/.test(report.asar?.patch?.runtimeMetadataScriptSha256 || "")) fail("desktop metadata script hash missing");
+          if (report.asar?.patch?.runtimeEnvironmentTargets !== 1) fail("runtime environment target mismatch");
+          const fastMode = report.asar?.patch?.fastMode;
+          if (!fastMode || !Number.isInteger(fastMode.authGateTargets) || fastMode.authGateTargets < 0 || fastMode.authGateTargets > 2) fail("Fast mode source target mismatch");
+          if (fastMode.expectedAuthGates !== 2 || fastMode.totalAuthGates !== 2) fail("Fast mode structural gate count mismatch");
+          if (fastMode.effectiveApiKeyGates !== 2) fail("effective API-key Fast mode gate mismatch");
+          if (fastMode.markerTargets + fastMode.nativeApiKeyGates !== 2) fail("Fast mode gate provenance mismatch");
+          if (!["patched", "native", "patched-and-native"].includes(fastMode.state)) fail("Fast mode final state mismatch");
+          const fastChangedPaths = Array.isArray(fastMode.changedPaths) ? fastMode.changedPaths : [];
+          if (!Number.isInteger(fastMode.changedEntries) || fastMode.changedEntries !== fastChangedPaths.length) fail("Fast mode changed-entry mismatch");
+          if (fastMode.authGateTargets === 0 && fastMode.changedEntries !== 0) fail("Fast mode changed an entry without a source target");
+          if (fastMode.authGateTargets > 0 && (fastMode.changedEntries < 1 || fastMode.changedEntries > fastMode.authGateTargets)) fail("Fast mode changed-entry scope mismatch");
+          if (fastChangedPaths.some((entry) => !/^webview\/assets\/[^/]+\.js$/.test(entry))) fail("unexpected Fast mode ASAR entry");
+          if (!/^\.vite\/build\/src-[^/]+\.js$/.test(report.asar?.patch?.runtimeEntry || "")) fail("runtime ASAR entry mismatch");
+          if (report.asar?.logicalComparison?.contentChanges !== 2 + fastMode.changedEntries) fail("ASAR diff mismatch");
+          const changedEntries = [...(report.asar?.logicalComparison?.changed || [])].sort();
+          const expectedChangedEntries = [".vite/build/child-process-snapshot-worker.js", report.asar.patch.runtimeEntry, ...fastChangedPaths].sort();
+          if (JSON.stringify(changedEntries) !== JSON.stringify(expectedChangedEntries)) fail("unexpected ASAR logical change");
+          if (report.resolver?.filename !== "codex-powershell-resolver.js") fail("resolver filename mismatch");
+          if (report.resolver?.version !== process.env.EXPECTED_PATCH_VERSION) fail("resolver version mismatch");
+          if (!/^[0-9a-f]{64}$/.test(report.resolver?.sha256 || "")) fail("resolver hash missing");
+          if (!(report.helper?.selfTest?.ExecutablePathRows > 0)) fail("executable-path helper evidence missing");
+          if (!(report.helper?.selfTest?.DesktopAppRows > 0)) fail("desktop metadata helper evidence missing");
+          if (report.helper?.selfTest?.ZipRoundTripFiles !== 1) fail("ZIP helper evidence missing");
+          if (report.helper?.selfTest?.PowerShellChildProcesses !== 0) fail("helper self-test launched PowerShell");
+          if (!(report.helper?.selfTestDurationMs > 0)) fail("helper timing evidence missing");
+          if (!report.workerSmoke?.controlledChildObserved) fail("worker smoke evidence missing");
+          const unpackedMismatches = report.workerSmoke?.extraction?.unpackedMetadataMismatches;
+          if (!Array.isArray(unpackedMismatches) || unpackedMismatches.length > 20) fail("unpacked ASAR metadata evidence invalid");
+          for (const mismatch of unpackedMismatches) {
+            const segments = typeof mismatch.path === "string" ? mismatch.path.split("/") : [];
+            if (segments.length < 1 || segments.some((segment) => !segment || segment === "." || segment === "..")) fail("unsafe unpacked ASAR metadata path");
+            if (!/^[0-9a-f]{64}$/.test(mismatch.actualSha256 || "")) fail("unpacked ASAR actual hash missing");
+            if (mismatch.expectedSha256 != null && !/^[0-9a-f]{64}$/.test(mismatch.expectedSha256)) fail("unpacked ASAR expected hash invalid");
+            if (mismatch.actualBytes === mismatch.expectedBytes && mismatch.actualSha256 === mismatch.expectedSha256) fail("unpacked ASAR metadata deviation has no difference");
+            if (mismatch.signature?.status !== "Valid" || mismatch.signature?.verifier !== "Windows SDK SignTool /pa /all") fail("unpacked ASAR signature evidence invalid");
+          }
+          if (Object.keys(report.zip?.verifiedPayloads || {}).length !== 7) fail("ZIP payload hash evidence incomplete");
+          if (!/^[0-9a-f]{64}$/.test(report.zip?.sha256 || "")) fail("ZIP hash evidence missing");
+          if (report.zip.sha256 !== sidecarHash) fail("verification report and checksum disagree");
+          if (!/^CX-[0-9.]+-p[0-9.]+\.zip$/.test(report.artifact?.zip || "")) fail("portable ZIP name is not compact");
+          if (report.zip?.pathCompatibility?.explicitRootEntries !== 0) fail("WinRAR-incompatible root entry evidence");
+          if (!(report.zip?.pathCompatibility?.legacyMaxDestinationLength > 0)) fail("legacy path budget missing");
+          if (report.zip?.pathCompatibility?.recommendedInstaller !== "CodexPatchLauncher.exe") fail("installer recommendation missing");
+          if (report.nativeLauncher?.file !== "CodexPatchLauncher.exe") fail("native launcher filename mismatch");
+          if (report.nativeLauncher?.version !== process.env.EXPECTED_PATCH_VERSION) fail("native launcher version mismatch");
+          if (!(report.nativeLauncher?.bytes >= 32768 && report.nativeLauncher?.bytes <= 2097152)) fail("native launcher size boundary mismatch");
+          if (report.nativeLauncher?.selfTest?.nativeLauncher !== true || report.nativeLauncher?.selfTest?.nativeInstaller !== true || report.nativeLauncher?.selfTest?.directShortcut !== true || report.nativeLauncher?.selfTest?.versionCatalog !== true || report.nativeLauncher?.selfTest?.directorySize !== true || report.nativeLauncher?.selfTest?.directLaunchTarget !== true || report.nativeLauncher?.selfTest?.manualDeletion !== true || report.nativeLauncher?.selfTest?.retentionPolicy !== true || report.nativeLauncher?.selfTest?.criticalValidation !== true || report.nativeLauncher?.selfTest?.managerIcon !== true || report.nativeLauncher?.selfTest?.powerShellChildProcesses !== 0) fail("native launcher self-test evidence missing");
+          if (report.portableLauncher?.file !== "CodexPatchLauncher.exe") fail("launcher filename mismatch");
+          if (report.portableLauncher?.version !== process.env.EXPECTED_PATCH_VERSION) fail("launcher version mismatch");
+          if (report.portableLauncher?.sha256 !== launcherHash) fail("launcher hash mismatch");
+          if (manifest.schemaVersion !== 2 || manifest.channel !== "stable") fail("update manifest schema mismatch");
+          if (manifest.repository !== "zhy0504/Codex-Windows-Desktop-Patch") fail("update manifest repository mismatch");
+          if (manifest.msixVersion !== process.env.EXPECTED_MSIX_VERSION || manifest.patchVersion !== process.env.EXPECTED_PATCH_VERSION) fail("update manifest version mismatch");
+          if (manifest.releaseTag !== `windows-msstore-${process.env.EXPECTED_MSIX_VERSION}-desktop-patch-${process.env.EXPECTED_PATCH_VERSION}`) fail("update manifest tag mismatch");
+          const filesByName = new Map([process.argv[2], process.argv[3], process.argv[4], process.argv[6]].map((file) => [path.basename(file), file]));
+          for (const key of ["zip", "checksum", "verification", "launcher"]) {
+            const asset = manifest.assets?.[key];
+            const file = filesByName.get(asset?.name);
+            if (!file) fail(`update manifest asset missing: ${key}`);
+            if (fs.statSync(file).size !== asset.size) fail(`update manifest size mismatch: ${key}`);
+            if (hashFile(file) !== asset.sha256) fail(`update manifest hash mismatch: ${key}`);
+          }
+          NODE
+
+      - name: Create release notes
+        shell: bash
+        env:
+          MSIX_VERSION: ${{ needs.plan.outputs.msix_version }}
+          PACKAGE_NAME: ${{ needs.plan.outputs.package_name }}
+          PATCH_VERSION: ${{ needs.plan.outputs.patch_version }}
+        run: |
+          cat > release-notes.md <<EOF
+          ## Upstream Windows package
+
+          - Microsoft Store package: \`${PACKAGE_NAME}\`
+          - MSIX identity version: \`${MSIX_VERSION}\`
+          - Patch version: \`${PATCH_VERSION}\`
+
+          ## Patch scope
+
+          The build changes two structurally validated PowerShell ASAR entries plus the structurally detected Fast-mode webview chunk or chunks. Four known process queries plus the primary-runtime ZIP operation, executable-path lookup, and Windows desktop metadata lookup are routed to the managed Windows helper. Its normal paths use Toolhelp, WMI, ZipArchive, Shell COM, and the registry without starting PowerShell. The desktop resolves the real PowerShell executable once per app process only for the private \`codex.exe\` terminal environment and helper fallbacks. For OpenAI API-key login, both the Fast setting eligibility check and the request-time configuration check accept \`apikey\` while continuing to reject unrelated authentication modes. It adds \`resources/codex-powershell-shim.exe\` and \`resources/codex-powershell-resolver.js\`; no managed transparent launcher is placed in the terminal hot path. The official \`ChatGPT.exe\`, \`Codex.exe\`, and \`resources/codex.exe\` remain byte-for-byte identical.
+
+          ## Verification
+
+          Publication requires a valid official MSIX signature and identity, four structurally validated query targets, three additional helper targets, zero remaining direct internal PowerShell targets, one terminal-shell resolver target, one Codex CLI environment target, exactly two effective API-key Fast gates with marker or upstream-native provenance, metadata-script hashing, timed helper self-tests, packed ASAR integrity verification, signed and recorded unpacked payload metadata deviations, an exact logical ASAR diff, packaged-worker smoke testing, full application file-scope comparison, critical ZIP payload verification, and a matching SHA-256 sidecar.
+
+          API Fast uses the OpenAI API service tier and is billed under the applicable premium API rates. This patch does not grant ChatGPT subscription credits, force a third-party endpoint to support Fast, or change model and project eligibility.
+
+          The portable ZIP omits the explicit ZIP root entry ./ that caused WinRAR to fail on patch 1.0.0.
+
+          Download the single \`CX-*-bundle.zip\` release asset, extract it to a short path, and double-click \`CodexPatchLauncher.exe\`. The native GUI installer verifies the inner application ZIP and lets you choose the install directory, automatic update checks, shortcuts, and whether to launch Codex.
+
+          The stable launcher checks this repository's latest GitHub Release at most once per 24 hours. When a newer release is found, it asks whether to upgrade (default Yes) and whether to retain the current version as a rollback backup (default Yes). It compares the release tag before downloading, then downloads the single bundle and verifies its GitHub digest plus every embedded asset before installing into a new version directory. Existing versions remain available for rollback when retained.
+
+          The Versions page can launch an older installation without changing the current version, attach notes, pin protected versions, show per-version disk usage, delete an unpinned inactive version, and validate or repair an installation against its exact GitHub Release. Settings can limit the number of retained older versions; the current version is excluded and pinned versions are protected from automatic deletion.
+
+          This is an unsigned community-patched bundle, not an OpenAI release. SHA-256 detects corruption and inconsistent assets but does not protect against compromise of the GitHub repository or its release credentials. Review the attached verification JSON and checksum before use.
+          EOF
+
+      - name: Publish deterministic release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MSIX_VERSION: ${{ needs.plan.outputs.msix_version }}
+          PATCH_VERSION: ${{ needs.plan.outputs.patch_version }}
+          RELEASE_TAG: ${{ needs.plan.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists; refusing to overwrite it."
+            exit 0
+          fi
+          mapfile -t assets < <(find artifacts -type f -name 'CX-*-bundle.zip' | sort)
+          if [[ ${#assets[@]} -ne 1 ]]; then
+            echo "Expected exactly one release bundle, found ${#assets[@]}" >&2
+            exit 1
+          fi
+          gh release create "$RELEASE_TAG" "${assets[@]}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Codex Windows ${MSIX_VERSION} - Desktop Patch ${PATCH_VERSION}" \
+            --notes-file release-notes.md \
+            --latest
