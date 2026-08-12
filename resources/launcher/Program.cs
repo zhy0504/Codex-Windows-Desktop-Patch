@@ -375,11 +375,25 @@ namespace CodexPatch.NativeLauncher
                     shortcutFirst.Failures.Count == 0 && shortcutSecond.Created == 0 && shortcutSecond.Repaired == 0 &&
                     shortcutSecond.Healthy == 4 && shortcutSecond.Failures.Count == 0 &&
                     shortcutThird.Created == 1 && shortcutThird.Healthy == 3 && shortcutThird.Failures.Count == 0;
-                if (!directShortcutPassed || !catalogPassed || !sizePassed ||
-                    !directLaunchPassed || !manualDeletionPassed ||
-                    !staleCurrentRepairBlocked || !retentionPassed || !validationPassed || !runtimePrerequisitePassed ||
-                    !managerIconPassed || !shortcutRepairPassed)
-                    throw new InvalidOperationException("Version management self-test failed.");
+                List<string> failedChecks = new List<string>();
+                if (!directShortcutPassed) failedChecks.Add("directShortcut");
+                if (!catalogPassed) failedChecks.Add("versionCatalog");
+                if (!sizePassed) failedChecks.Add("directorySize");
+                if (!directLaunchPassed) failedChecks.Add("directLaunchTarget");
+                if (!manualDeletionPassed) failedChecks.Add("manualDeletion");
+                if (!staleCurrentRepairBlocked) failedChecks.Add("staleCurrentRepairBlocked");
+                if (!retentionPassed) failedChecks.Add("retentionPolicy");
+                if (!validationPassed) failedChecks.Add("criticalValidation");
+                if (!runtimePrerequisitePassed) failedChecks.Add("runtimePrerequisite=" + dotNetFrameworkRelease);
+                if (!managerIconPassed) failedChecks.Add("managerIcon");
+                if (!shortcutRepairPassed)
+                    failedChecks.Add("shortcutRepair=" +
+                        shortcutFirst.Created + "/" + shortcutFirst.Healthy + "/" + shortcutFirst.Failures.Count + "," +
+                        shortcutSecond.Created + "/" + shortcutSecond.Repaired + "/" + shortcutSecond.Healthy + "/" + shortcutSecond.Failures.Count + "," +
+                        shortcutThird.Created + "/" + shortcutThird.Healthy + "/" + shortcutThird.Failures.Count);
+                if (failedChecks.Count > 0)
+                    throw new InvalidOperationException("Version management self-test failed: " +
+                        String.Join(", ", failedChecks.ToArray()) + ".");
                 WriteJson(new Dictionary<string, object>
                 {
                     { "status", "Passed" }, { "launcherVersion", LauncherConstants.Version },
