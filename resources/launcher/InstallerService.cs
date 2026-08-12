@@ -126,14 +126,7 @@ namespace CodexPatch.NativeLauncher
                     using (Brush center = new SolidBrush(Color.White)) graphics.FillEllipse(center, 83, 83, 90, 90);
                     using (Brush hole = new SolidBrush(Color.FromArgb(255, 35, 49, 59))) graphics.FillEllipse(hole, 106, 106, 44, 44);
 
-                    IntPtr handle = bitmap.GetHicon();
-                    try
-                    {
-                        using (Icon icon = Icon.FromHandle(handle))
-                        using (FileStream stream = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None))
-                            icon.Save(stream);
-                    }
-                    finally { DestroyIcon(handle); }
+                    WriteIconFile(bitmap, temporary);
                 }
 
                 try { File.Move(temporary, path); }
@@ -444,6 +437,81 @@ namespace CodexPatch.NativeLauncher
             return normalized;
         }
 
+        private static void WriteIconFile(Bitmap bitmap, string path)
+        {
+            const int headerSize = 6;
+            const int directoryEntrySize = 16;
+            const int dibHeaderSize = 40;
+            int width = bitmap.Width;
+            int height = bitmap.Height;
+            int pixelBytes = width * height * 4;
+            int maskStride = ((width + 31) / 32) * 4;
+            int maskBytes = maskStride * height;
+            int imageOffset = headerSize + directoryEntrySize;
+            int imageSize = dibHeaderSize + pixelBytes + maskBytes;
+            byte[] data = new byte[imageOffset + imageSize];
+
+            WriteUInt16(data, 0, 0);
+            WriteUInt16(data, 2, 1);
+            WriteUInt16(data, 4, 1);
+            data[6] = width >= 256 ? (byte)0 : (byte)width;
+            data[7] = height >= 256 ? (byte)0 : (byte)height;
+            WriteUInt16(data, 10, 1);
+            WriteUInt16(data, 12, 32);
+            WriteUInt32(data, 14, imageSize);
+            WriteUInt32(data, 18, imageOffset);
+
+            int dib = imageOffset;
+            WriteUInt32(data, dib, dibHeaderSize);
+            WriteInt32(data, dib + 4, width);
+            WriteInt32(data, dib + 8, height * 2);
+            WriteUInt16(data, dib + 12, 1);
+            WriteUInt16(data, dib + 14, 32);
+            WriteUInt32(data, dib + 16, 0);
+            WriteUInt32(data, dib + 20, pixelBytes);
+            WriteInt32(data, dib + 24, 0);
+            WriteInt32(data, dib + 28, 0);
+            WriteUInt32(data, dib + 32, 0);
+            WriteUInt32(data, dib + 36, 0);
+
+            int pixels = dib + dibHeaderSize;
+            for (int y = 0; y < height; y++)
+            {
+                int sourceY = height - y - 1;
+                for (int x = 0; x < width; x++)
+                {
+                    Color color = bitmap.GetPixel(x, sourceY);
+                    int offset = pixels + ((y * width + x) * 4);
+                    data[offset] = color.B;
+                    data[offset + 1] = color.G;
+                    data[offset + 2] = color.R;
+                    data[offset + 3] = color.A;
+                }
+            }
+
+            using (FileStream stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None))
+                stream.Write(data, 0, data.Length);
+        }
+
+        private static void WriteUInt16(byte[] data, int offset, int value)
+        {
+            data[offset] = (byte)(value & 0xff);
+            data[offset + 1] = (byte)((value >> 8) & 0xff);
+        }
+
+        private static void WriteUInt32(byte[] data, int offset, int value)
+        {
+            data[offset] = (byte)(value & 0xff);
+            data[offset + 1] = (byte)((value >> 8) & 0xff);
+            data[offset + 2] = (byte)((value >> 16) & 0xff);
+            data[offset + 3] = (byte)((value >> 24) & 0xff);
+        }
+
+        private static void WriteInt32(byte[] data, int offset, int value)
+        {
+            WriteUInt32(data, offset, value);
+        }
+
         private static bool TryCreateShortcut(string path, string target, string workingDirectory,
             string arguments, string description, string iconPath, IList<string> warnings)
         {
@@ -469,16 +537,20 @@ namespace CodexPatch.NativeLauncher
                 LauncherCore.NotifyShellItemChanged(path);
                 return true;
             }
-            catch (Exception error) { warnings.Add("无法创建快捷方式 " + path + "：" + error.Message); return false; }
+            catch (Exception error)
+            {
+                Exception detail = error;
+                while (detail.InnerException != null) detail = detail.InnerException;
+                string suffix = Object.ReferenceEquals(detail, error) ? String.Empty : " (" + detail.Message + ")";
+                warnings.Add("无法创建快捷方式 " + path + "：" + error.Message + suffix);
+                return false;
+            }
             finally
             {
                 if (shortcut != null && Marshal.IsComObject(shortcut)) Marshal.FinalReleaseComObject(shortcut);
                 if (shell != null && Marshal.IsComObject(shell)) Marshal.FinalReleaseComObject(shell);
             }
         }
-
-        [DllImport("user32.dll")]
-        private static extern bool DestroyIcon(IntPtr handle);
 
     }
 }
