@@ -31,7 +31,7 @@ test("native launcher and installer replace PowerShell entry points", () => {
   assert.match(runtimeSource, /class VersionManager/);
   assert.match(runtimeSource, /ValidateInstalled/);
   assert.match(runtimeSource, /RepairInstalled/);
-  assert.match(runtimeSource, /Codex Desktop Patch 管理器\.lnk/);
+  assert.match(runtimeSource, /ManagerShortcutFilename/);
   assert.match(runtimeSource, /ManagerIconFilename/);
   assert.match(runtimeSource, /RefreshExistingShortcuts/);
   assert.match(runtimeSource, /CheckAndRepairShortcuts/);

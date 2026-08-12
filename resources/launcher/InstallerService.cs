@@ -288,7 +288,7 @@ namespace CodexPatch.NativeLauncher
                     string desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
                     TryCreateShortcut(Path.Combine(desktop, "Codex Desktop Patch.lnk"), launcher, root,
                         LauncherConstants.DirectLaunchArgument, "直接启动 Codex Desktop Patch", launcher, result.Warnings);
-                    TryCreateShortcut(Path.Combine(desktop, "Codex Desktop Patch 管理器.lnk"), launcher, root,
+                    TryCreateShortcut(Path.Combine(desktop, LauncherConstants.ManagerShortcutFilename), launcher, root,
                         String.Empty, "打开 Codex Desktop Patch 管理器", managerIcon, result.Warnings);
                 }
                 if (options.CreateStartMenuShortcut)
@@ -297,7 +297,7 @@ namespace CodexPatch.NativeLauncher
                         @"Microsoft\Windows\Start Menu\Programs");
                     TryCreateShortcut(Path.Combine(programs, "Codex Desktop Patch.lnk"), launcher, root,
                         LauncherConstants.DirectLaunchArgument, "直接启动 Codex Desktop Patch", launcher, result.Warnings);
-                    TryCreateShortcut(Path.Combine(programs, "Codex Desktop Patch 管理器.lnk"), launcher, root,
+                    TryCreateShortcut(Path.Combine(programs, LauncherConstants.ManagerShortcutFilename), launcher, root,
                         String.Empty, "打开 Codex Desktop Patch 管理器", managerIcon, result.Warnings);
                 }
                 LauncherCore.WriteLog(root, "Installed with native installer: " + verifiedPackage.ArtifactBase);
@@ -341,7 +341,7 @@ namespace CodexPatch.NativeLauncher
                 },
                 new ShortcutDefinition
                 {
-                    Path = Path.Combine(desktop, "Codex Desktop Patch 管理器.lnk"),
+                    Path = Path.Combine(desktop, LauncherConstants.ManagerShortcutFilename),
                     Label = "桌面 / Codex Desktop Patch 管理器",
                     Target = launcher,
                     WorkingDirectory = workingDirectory,
@@ -361,7 +361,7 @@ namespace CodexPatch.NativeLauncher
                 },
                 new ShortcutDefinition
                 {
-                    Path = Path.Combine(programs, "Codex Desktop Patch 管理器.lnk"),
+                    Path = Path.Combine(programs, LauncherConstants.ManagerShortcutFilename),
                     Label = "开始菜单 / Codex Desktop Patch 管理器",
                     Target = launcher,
                     WorkingDirectory = workingDirectory,

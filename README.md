@@ -86,7 +86,7 @@ Codex Desktop 会在后台多次启动 PowerShell，用来读取进程信息、�
 安装完成后，桌面和开始菜单会各提供两个入口：
 
 - `Codex Desktop Patch`：直接启动当前补丁版 Codex，不打开管理界面；
-- `Codex Desktop Patch 管理器`：打开启动器 GUI，进行更新、版本管理、校验和修复。
+- `Codex Desktop Patch Manager`：打开启动器 GUI，进行更新、版本管理、校验和修复。
 
 图标修复版本会使用两种图标：彩色环形图标用于直接启动，带齿轮标识的深色图标用于管理器。启动器会在安装、更新和日常启动时刷新已有的桌面和开始菜单快捷方式；任务栏固定项仍需由 Windows 手动重新固定。
 
@@ -221,7 +221,7 @@ $root = "$env:LOCALAPPDATA\Programs\CodexDesktopPatch"
 ## 卸载
 
 1. 完全退出 Codex Desktop。
-2. 删除桌面和开始菜单中的 `Codex Desktop Patch`、`Codex Desktop Patch 管理器` 快捷方式。
+2. 删除桌面和开始菜单中的 `Codex Desktop Patch`、`Codex Desktop Patch Manager` 快捷方式。
 3. 删除以下目录：
 
 ```text

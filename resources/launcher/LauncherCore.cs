@@ -21,6 +21,7 @@ namespace CodexPatch.NativeLauncher
         internal const string Repository = "zhy0504/Codex-Windows-Desktop-Patch";
         internal const string NativeFilename = "CodexPatchLauncher.exe";
         internal const string ManagerIconFilename = "CodexPatchManager.ico";
+        internal const string ManagerShortcutFilename = "Codex Desktop Patch Manager.lnk";
         internal const string ManifestFilename = "CodexPatch-update.json";
         internal const string CleanupFilename = "pending-cleanup.json";
         internal const string RepairStateFilename = "pending-repair.json";
