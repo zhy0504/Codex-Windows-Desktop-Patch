@@ -390,7 +390,8 @@ namespace CodexPatch.NativeLauncher
                     failedChecks.Add("shortcutRepair=" +
                         shortcutFirst.Created + "/" + shortcutFirst.Healthy + "/" + shortcutFirst.Failures.Count + "," +
                         shortcutSecond.Created + "/" + shortcutSecond.Repaired + "/" + shortcutSecond.Healthy + "/" + shortcutSecond.Failures.Count + "," +
-                        shortcutThird.Created + "/" + shortcutThird.Healthy + "/" + shortcutThird.Failures.Count);
+                        shortcutThird.Created + "/" + shortcutThird.Healthy + "/" + shortcutThird.Failures.Count + ":" +
+                        String.Join("|", shortcutFirst.Failures.ToArray()));
                 if (failedChecks.Count > 0)
                     throw new InvalidOperationException("Version management self-test failed: " +
                         String.Join(", ", failedChecks.ToArray()) + ".");
